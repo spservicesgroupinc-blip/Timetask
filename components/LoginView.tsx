@@ -7,9 +7,10 @@ interface Props {
   users: UserProfile[];
   onLogin: (user: UserProfile) => void;
   isLoading: boolean;
+  onRefreshUsers: () => Promise<void>;
 }
 
-const LoginView: React.FC<Props> = ({ users, onLogin, isLoading }) => {
+const LoginView: React.FC<Props> = ({ users, onLogin, isLoading, onRefreshUsers }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -27,13 +28,17 @@ const LoginView: React.FC<Props> = ({ users, onLogin, isLoading }) => {
           const matchEmail = String(u.email || '').trim().toLowerCase();
           const matchName = String(u.name || '').trim().toLowerCase();
           const matchPassword = String(u.password || '').trim();
-          return (matchEmail === trimmedEmail.toLowerCase() || matchName === trimmedEmail.toLowerCase()) && matchPassword === password.trim();
+          const isMatch = (matchEmail === trimmedEmail.toLowerCase() || matchName === trimmedEmail.toLowerCase()) && matchPassword === password.trim();
+          return isMatch;
       }
     );
 
     if (user) {
+      console.log('Login successful for user:', user);
       onLogin(user);
     } else {
+      console.log('Login failed. Attempted:', { email: trimmedEmail, password: password });
+      console.log('Available users:', users);
       setError('Invalid email or password.');
     }
   };
@@ -48,7 +53,7 @@ const LoginView: React.FC<Props> = ({ users, onLogin, isLoading }) => {
           return;
       }
 
-      if (users.some(u => String(u.email || '').toLowerCase() === trimmedEmail.toLowerCase())) {
+      if (users.some(u => String(u.email || '').trim().toLowerCase() === trimmedEmail.toLowerCase())) {
           setError('User with this email already exists.');
           return;
       }
@@ -64,6 +69,7 @@ const LoginView: React.FC<Props> = ({ users, onLogin, isLoading }) => {
               role: 'admin'
           };
           await saveUser(newUser, true);
+          await onRefreshUsers();
           alert('Company Admin created successfully! Logging you in...');
           onLogin(newUser);
       } catch (err: any) {

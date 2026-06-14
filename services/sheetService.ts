@@ -284,7 +284,7 @@ async function fetchGeneric<T>(table: 'tasks' | 'messages' | 'users' | 'jobs' | 
     throw new Error(result.message || 'Failed to fetch');
   } catch (error) {
     if (table !== 'time_entries') {
-        console.warn(`API Fetch Error (${table}):`, error);
+        console.error(`API Fetch Error (${table}):`, error);
     }
     return [];
   }

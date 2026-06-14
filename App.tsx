@@ -356,6 +356,7 @@ const App: React.FC = () => {
               users={users} 
               onLogin={handleLogin} 
               isLoading={isLoading} 
+              onRefreshUsers={() => loadData(false)}
           />
       );
   }
