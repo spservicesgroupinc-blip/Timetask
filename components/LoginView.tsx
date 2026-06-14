@@ -23,7 +23,12 @@ const LoginView: React.FC<Props> = ({ users, onLogin, isLoading }) => {
 
     const trimmedEmail = email.trim();
     const user = users.find(
-      u => u.email?.toLowerCase() === trimmedEmail.toLowerCase() && u.password === password
+      u => {
+          const matchEmail = String(u.email || '').trim().toLowerCase();
+          const matchName = String(u.name || '').trim().toLowerCase();
+          const matchPassword = String(u.password || '').trim();
+          return (matchEmail === trimmedEmail.toLowerCase() || matchName === trimmedEmail.toLowerCase()) && matchPassword === password.trim();
+      }
     );
 
     if (user) {
@@ -43,7 +48,7 @@ const LoginView: React.FC<Props> = ({ users, onLogin, isLoading }) => {
           return;
       }
 
-      if (users.some(u => u.email?.toLowerCase() === trimmedEmail.toLowerCase())) {
+      if (users.some(u => String(u.email || '').toLowerCase() === trimmedEmail.toLowerCase())) {
           setError('User with this email already exists.');
           return;
       }

@@ -122,6 +122,12 @@ const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: p
           role: newUser.role as 'admin' | 'user'
       };
       
+      // Check for email conflicts
+      if (user.email && propUsers.some(u => u.id !== user.id && String(u.email || '').trim().toLowerCase() === user.email?.toLowerCase())) {
+          alert('User with this email already exists.');
+          return;
+      }
+      
       // Optimistic update
       if (isNew) {
           addUser(user);
