@@ -3,10 +3,10 @@ const CACHE_NAME = 'truchoice-tasks-v4';
 
 // Add the external CDNs your app relies on
 const urlsToCache = [
-  './',
-  './index.html',
-  './manifest.json',
-  './icon.svg',
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icon.svg',
   'https://cdn.tailwindcss.com',
   'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap'
 ];
@@ -105,10 +105,10 @@ self.addEventListener('push', (event) => {
     const title = data.title || 'TruChoice Update';
     const options = {
       body: data.body || 'New activity in the app.',
-      icon: './icon.svg',
-      badge: './icon.svg',
+      icon: '/icon.svg',
+      badge: '/icon.svg',
       data: {
-        url: data.url || './' // Allow deep linking
+        url: data.url || '/' // Allow deep linking
       },
       vibrate: [100, 50, 100],
       tag: 'truchoice-notification', // Overwrite old notifications to prevent stacking spam
@@ -125,7 +125,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close(); // Close the notification
 
-  const urlToOpen = new URL(event.notification.data.url || './', self.location.origin).href;
+  const urlToOpen = new URL(event.notification.data.url || '/', self.location.origin).href;
 
   const promiseChain = clients.matchAll({
     type: 'window',
