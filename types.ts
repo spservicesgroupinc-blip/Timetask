@@ -66,7 +66,7 @@ export interface UserProfile {
   email?: string;
   password?: string;
   rate: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'employee' | 'manager' | 'user';
   pin?: string; 
 }
 

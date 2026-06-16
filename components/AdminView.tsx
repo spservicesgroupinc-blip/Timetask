@@ -95,7 +95,7 @@ const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: p
   const { localData: tasks, add: addTask, remove: removeTask, revertRemove: revertRemoveTask, revertAdd: revertAddTask } = useOptimisticList(propTasks, (a, b) => b.createdAt - a.createdAt);
 
         // Forms
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', rate: '', role: 'user' });
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', rate: '', role: 'user' as UserProfile['role'] });
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [newJob, setNewJob] = useState({ name: '', address: '' });
   const [newTask, setNewTask] = useState({ title: '', assignedTo: '', jobName: '' });
@@ -119,7 +119,7 @@ const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: p
           email: newUser.email ? newUser.email.trim() : '',
           password: newUser.password,
           rate: newUser.rate,
-          role: newUser.role as 'admin' | 'user'
+          role: newUser.role
       };
       
       // Check for email conflicts
@@ -447,11 +447,13 @@ const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: p
                                       <label className="text-xs font-semibold text-slate-400">Role</label>
                                       <select 
                                           value={newUser.role}
-                                          onChange={e => setNewUser({...newUser, role: e.target.value})}
+                                          onChange={e => setNewUser({...newUser, role: e.target.value as UserProfile['role']})}
                                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
                                       >
                                           <option value="user">User</option>
                                           <option value="admin">Admin</option>
+                                          <option value="manager">Manager</option>
+                                          <option value="employee">Employee</option>
                                       </select>
                                   </div>
                                 </div>

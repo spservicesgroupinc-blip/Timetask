@@ -6,6 +6,7 @@ import { saveTimeEntryLocal, syncPendingTimeEntries, generateReport } from '../s
 
 interface Props {
   timeEntries: TimeEntry[];
+  userId: string;
   userName: string;
   hourlyRate: string;
   availableJobs: JobOption[];
@@ -22,7 +23,7 @@ const formatDuration = (ms: number) => {
 };
 
 // Extracted Timer Component to isolate re-renders
-const ActiveTimer = React.memo(({ startTime }: { startTime: number }) => {
+const ActiveTimer = React.memo(({ startTime, hourlyRate }: { startTime: number, hourlyRate: string }) => {
     const [elapsed, setElapsed] = useState(Date.now() - startTime);
     
     useEffect(() => {
@@ -32,14 +33,32 @@ const ActiveTimer = React.memo(({ startTime }: { startTime: number }) => {
         return () => clearInterval(interval);
     }, [startTime]);
 
+    const earnings = (elapsed / (1000 * 60 * 60)) * (parseFloat(hourlyRate) || 0);
+
     return (
-        <div className="text-5xl font-mono font-bold text-slate-900 mb-6 tracking-tighter">
-             {formatDuration(elapsed)}
+        <div className="flex flex-col items-center mb-6">
+            <div className="text-5xl font-mono font-bold text-slate-900 tracking-tighter mb-1">
+                 {formatDuration(elapsed)}
+            </div>
+            {hourlyRate && hourlyRate !== '0' && (
+                <div className="text-emerald-600 font-bold flex items-center gap-1 animate-pulse">
+                    <DollarSign size={16} />
+                    <span>${earnings.toFixed(2)} earned so far</span>
+                </div>
+            )}
         </div>
     );
 });
 
-const TimeClockView: React.FC<Props> = ({ timeEntries, userName, hourlyRate, availableJobs, onRefresh, onOptimisticUpdate }) => {
+const TimeClockView: React.FC<Props> = ({ 
+    timeEntries, 
+    userId,
+    userName, 
+    hourlyRate, 
+    availableJobs, 
+    onRefresh, 
+    onOptimisticUpdate 
+}) => {
   const [activeEntry, setActiveEntry] = useState<TimeEntry | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [selectedJob, setSelectedJob] = useState('');
@@ -50,23 +69,55 @@ const TimeClockView: React.FC<Props> = ({ timeEntries, userName, hourlyRate, ava
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [reportUrl, setReportUrl] = useState<string | null>(null);
   
-  // Filter entries for current user
+  // Filter entries for current user (check both ID and name for backward compatibility)
   const userEntries = timeEntries
-    .filter(t => t.userId === userName)
+    .filter(t => t.userId === userId || t.userId === userName)
     .sort((a, b) => b.startTime - a.startTime);
 
   const unsyncedCount = userEntries.filter(t => t.isSynced === false).length;
 
-  // Initialize active entry
+  // Initialize active entry - With fallback to localStorage for stability during navigation
   useEffect(() => {
-    const active = userEntries.find(t => t.status === 'active');
-    setActiveEntry(active || null);
-    if (active && active.jobName) {
-        setSelectedJob(active.jobName);
-    } else if (!active) {
+    const activeFromProps = userEntries.find(t => t.status === 'active');
+    
+    if (activeFromProps) {
+      setActiveEntry(activeFromProps);
+      if (activeFromProps.jobName) {
+        setSelectedJob(activeFromProps.jobName);
+      }
+      // Keep localStorage in sync - use userId for more consistent tracking
+      localStorage.setItem(`active_shift_${userId}`, JSON.stringify(activeFromProps));
+    } else {
+      // Check if we have a locally stored active shift that hasn't synced yet or was lost in transition
+      const stored = localStorage.getItem(`active_shift_${userId}`);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as TimeEntry;
+          if (parsed.status === 'active') {
+             // Validate this isn't ancient (e.g., more than 24h old might be a stale error)
+             const isRecent = (Date.now() - parsed.startTime) < (24 * 60 * 60 * 1000);
+             if (isRecent) {
+                setActiveEntry(parsed);
+                if (parsed.jobName) setSelectedJob(parsed.jobName);
+             } else {
+                localStorage.removeItem(`active_shift_${userId}`);
+                setActiveEntry(null);
+                setSelectedJob('');
+             }
+          } else {
+            setActiveEntry(null);
+            setSelectedJob('');
+          }
+        } catch (e) {
+          setActiveEntry(null);
+          setSelectedJob('');
+        }
+      } else {
+        setActiveEntry(null);
         setSelectedJob('');
+      }
     }
-  }, [timeEntries, userName]);
+  }, [timeEntries, userId, userName]);
 
   const handleToggleClock = async () => {
     try {
@@ -89,7 +140,8 @@ const TimeClockView: React.FC<Props> = ({ timeEntries, userName, hourlyRate, ava
           totalPay: calculatedPay > 0 ? calculatedPay : undefined,
           isSynced: true
         };
-        setSelectedJob(''); // Clear input after clocking out
+        setSelectedJob(''); 
+        localStorage.removeItem(`active_shift_${userId}`); // Clear persistent state
       } else {
         // Clock In
         if (!selectedJob) {
@@ -98,13 +150,15 @@ const TimeClockView: React.FC<Props> = ({ timeEntries, userName, hourlyRate, ava
         }
         updatedEntry = {
           id: crypto.randomUUID(),
-          userId: userName,
+          userId: userId, // Use stable ID
           startTime: Date.now(),
           endTime: null,
           status: 'active',
           jobName: selectedJob,
           isSynced: true
         };
+        // Persist immediately
+        localStorage.setItem(`active_shift_${userId}`, JSON.stringify(updatedEntry));
       }
       
       // Save to Google Sheet immediately
@@ -114,8 +168,8 @@ const TimeClockView: React.FC<Props> = ({ timeEntries, userName, hourlyRate, ava
       // Force aggressive sync so Admin sees this immediately
       syncPendingTimeEntries().catch(e => console.error("Background sync failed", e));
       
-    } catch (e) {
-      alert("Error saving locally. Please check storage.");
+    } catch (e: any) {
+      alert("Failed to save shift to Google Sheets: " + (e.message || e));
     }
   };
 
@@ -256,9 +310,9 @@ const TimeClockView: React.FC<Props> = ({ timeEntries, userName, hourlyRate, ava
         
         {/* Isolated Timer Component */}
         {activeEntry ? (
-            <ActiveTimer startTime={activeEntry.startTime} />
+            <ActiveTimer startTime={activeEntry.startTime} hourlyRate={hourlyRate} />
         ) : (
-            <div className="text-5xl font-mono font-bold text-slate-300 mb-6 tracking-tighter">
+            <div className="text-5xl font-mono font-bold text-slate-300 mb-6 tracking-tighter text-center">
                 00:00:00
             </div>
         )}

@@ -228,8 +228,9 @@ const App: React.FC = () => {
         if (task.status === TaskStatus.IN_PROGRESS) {
             loadData(true);
         }
-    } catch (error) {
-        alert("Synced task locally, but failed to sync to server. Will retry next time.");
+    } catch (error: any) {
+        alert("Failed to save task to Google Sheets: " + (error.message || error));
+        loadData(true); // Re-fetch to synchronize state
     }
   };
 
@@ -562,6 +563,7 @@ const App: React.FC = () => {
         {currentView === 'timeclock' && (
             <TimeClockView 
                 timeEntries={timeEntries}
+                userId={currentUser.id}
                 userName={currentUser.name}
                 hourlyRate={currentUser.rate || '0'}
                 availableJobs={jobs}
