@@ -406,36 +406,52 @@ const App: React.FC = () => {
              </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+             <div className="hidden sm:flex flex-col items-end mr-2 text-right">
+                <span className="text-xs font-bold text-slate-900">{currentUser.name}</span>
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest">{currentUser.role}</span>
+             </div>
+
              {deferredPrompt && (
                 <button 
                   onClick={handleInstallClick} 
-                  className="p-2 text-white bg-slate-900 hover:bg-orange-600 rounded-lg shadow-md transition-colors mr-1"
+                  className="p-2 text-white bg-slate-900 hover:bg-orange-600 rounded-lg shadow-md transition-colors"
                   title="Install App"
                 >
-                  <Download size={20} />
+                  <Download size={18} />
                 </button>
              )}
 
              {/* Admin Toggle */}
              {currentUser.role === 'admin' && (
-                 <button onClick={() => setIsAdminOpen(true)} className="p-2 text-slate-400 hover:text-orange-600">
+                 <button onClick={() => setIsAdminOpen(true)} className="p-2 text-slate-400 hover:text-orange-600 transition-colors">
                     <Briefcase size={20} />
                  </button>
              )}
 
-             <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500" title="Logout">
+             <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors" title="Logout">
                 <LogOut size={20} />
              </button>
 
              {currentView === 'tasks' && (
-                 <button onClick={() => { setEditingTask(null); setNewItemDate(undefined); setIsTaskModalOpen(true); }} className="bg-slate-900 text-white p-2 rounded-lg shadow-md">
+                 <button onClick={() => { setEditingTask(null); setNewItemDate(undefined); setIsTaskModalOpen(true); }} className="bg-slate-900 text-white p-2 rounded-lg shadow-md hover:bg-orange-600 transition-colors">
                     <Plus size={20} />
                  </button>
              )}
           </div>
         </div>
       </header>
+      
+      {/* User Status Bar (Mobile focused) */}
+      <div className="bg-slate-900 text-white py-1.5 px-4 sm:hidden flex items-center justify-between border-t border-slate-700">
+         <div className="flex items-center gap-2">
+            <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-[10px] font-bold">
+               {currentUser.name.charAt(0)}
+            </div>
+            <span className="text-xs font-medium">{currentUser.name}</span>
+         </div>
+         <span className="text-[9px] uppercase tracking-widest opacity-60">{currentUser.role}</span>
+      </div>
 
       {/* Main Content */}
       <main className="max-w-3xl mx-auto px-4 py-6">
@@ -443,6 +459,27 @@ const App: React.FC = () => {
         {/* VIEW: TASKS */}
         {currentView === 'tasks' && (
             <>
+                {/* Active Shift Banner */}
+                {timeEntries.find(e => e.status === 'active' && (e.userId === currentUser.id || e.userId === currentUser.name)) && (
+                    <div 
+                        onClick={() => setCurrentView('timeclock')}
+                        className="mb-6 bg-emerald-600 text-white rounded-xl p-4 shadow-lg flex items-center justify-between cursor-pointer group active:scale-95 transition-all"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-white/20 rounded-lg">
+                                <Clock size={20} className="animate-pulse" />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-sm">Active Shift</h4>
+                                <p className="text-[10px] opacity-90">Tap to view live earnings & clock out</p>
+                            </div>
+                        </div>
+                        <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 group-hover:bg-white/30">
+                            View Pay <RotateCcw size={12} className="rotate-180" />
+                        </div>
+                    </div>
+                )}
+
                 {/* Search & Tabs */}
                 <div className="mb-6 space-y-3">
                     <div className="relative">
@@ -539,22 +576,8 @@ const App: React.FC = () => {
                 messages={messages}
                 currentUserName={currentUser.name}
                 onSendMessage={async (text, image) => {
-                    const newMsg: ChatMessage = {
-                        id: crypto.randomUUID(),
-                        sender: currentUser.name,
-                        text,
-                        image,
-                        timestamp: Date.now(),
-                        status: 'pending'
-                    };
-                    // Optimistic update
-                    setMessages(prev => [...prev, newMsg]);
-                    try {
-                        const sent = await sendMessage(newMsg);
-                        setMessages(prev => prev.map(m => m.id === newMsg.id ? sent : m));
-                    } catch (e) {
-                         setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, status: 'error' } : m));
-                    }
+                    // ChatView handles its own sending now, but we keep this prop for future flexibility
+                    // The App polling will pick up the new message for other clients
                 }}
             />
         )}

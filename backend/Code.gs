@@ -149,12 +149,19 @@ function loginUser(data) {
   const sheet = getSheet('users');
   const values = sheet.getDataRange().getValues();
   const headers = getHeaders(sheet);
-  const eIdx = headers.indexOf('email'), pIdx = headers.indexOf('password'), rIdx = headers.indexOf('role'), nIdx = headers.indexOf('name'), iIdx = headers.indexOf('id');
+  const eIdx = headers.indexOf('email'), pIdx = headers.indexOf('password'), rIdx = headers.indexOf('role'), nIdx = headers.indexOf('name'), iIdx = headers.indexOf('id'), rtIdx = headers.indexOf('rate'), pnIdx = headers.indexOf('pin');
   const hashed = hashPassword(password);
   const target = String(email).trim().toLowerCase();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][eIdx]).toLowerCase() === target && String(values[i][pIdx]) === hashed) {
-      const user = { id: values[i][iIdx], email: values[i][eIdx], role: values[i][rIdx], name: values[i][nIdx] };
+      const user = { 
+        id: values[i][iIdx], 
+        email: values[i][eIdx], 
+        role: values[i][rIdx], 
+        name: values[i][nIdx],
+        rate: values[i][rtIdx] || "0",
+        pin: values[i][pnIdx] || ""
+      };
       return { token: generateToken(user), user };
     }
   }

@@ -348,7 +348,7 @@ async function fetchGeneric<T>(table: 'tasks' | 'messages' | 'users' | 'jobs' | 
     if (table !== 'time_entries') {
         console.error(`API Fetch Error (${table}):`, error);
     }
-    return [];
+    throw error;
   }
 }
 

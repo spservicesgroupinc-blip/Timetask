@@ -40,10 +40,15 @@ const ActiveTimer = React.memo(({ startTime, hourlyRate }: { startTime: number, 
             <div className="text-5xl font-mono font-bold text-slate-900 tracking-tighter mb-1">
                  {formatDuration(elapsed)}
             </div>
-            {hourlyRate && hourlyRate !== '0' && (
+            {hourlyRate && hourlyRate !== '0' ? (
                 <div className="text-emerald-600 font-bold flex items-center gap-1 animate-pulse">
                     <DollarSign size={16} />
                     <span>${earnings.toFixed(2)} earned so far</span>
+                </div>
+            ) : (
+                <div className="text-slate-400 text-xs flex items-center gap-1">
+                    <AlertTriangle size={12} />
+                    <span>Rate not set. Contact admin for pay tracking.</span>
                 </div>
             )}
         </div>
