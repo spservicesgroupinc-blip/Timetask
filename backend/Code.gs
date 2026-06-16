@@ -159,8 +159,8 @@ function loginUser(data) {
         email: values[i][eIdx], 
         role: values[i][rIdx], 
         name: values[i][nIdx],
-        rate: values[i][rtIdx] || "0",
-        pin: values[i][pnIdx] || ""
+        rate: String(values[i][rtIdx] || "0"),
+        pin: String(values[i][pnIdx] || "")
       };
       return { token: generateToken(user), user };
     }
@@ -169,7 +169,7 @@ function loginUser(data) {
 }
 
 function registerUser(data) {
-  const { name, email, password, role } = data;
+  const { name, email, password, role, rate, pin } = data;
   if (!name || !email || !password) throw new AuthError("Missing fields", 400);
   const sheet = getSheet('users');
   const headers = getHeaders(sheet);
@@ -177,7 +177,16 @@ function registerUser(data) {
   const eIdx = headers.indexOf('email');
   const target = String(email).trim().toLowerCase();
   for(let i = 1; i < values.length; i++) if(String(values[i][eIdx]).toLowerCase() === target) throw new AuthError("Email exists", 409);
-  const newUser = { id: Utilities.getUuid(), name, email, password: hashPassword(password), role: role || 'user', rate: '0', pin: '' };
+  
+  const newUser = { 
+    id: Utilities.getUuid(), 
+    name, 
+    email, 
+    password: hashPassword(password), 
+    role: role || 'user', 
+    rate: String(rate || '0'), 
+    pin: String(pin || '') 
+  };
   createItem('users', newUser);
   return { token: generateToken(newUser), user: { ...newUser, password: undefined } };
 }

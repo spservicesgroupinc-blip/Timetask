@@ -132,6 +132,16 @@ const MessageList = React.memo(({ messages, currentUserName, handleSend }: any) 
 });
 
 
+const generateUUID = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+};
+
 const ChatView: React.FC<Props> = ({ messages: serverMessages, currentUserName }) => {
   const [inputValue, setInputValue] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -162,7 +172,7 @@ const ChatView: React.FC<Props> = ({ messages: serverMessages, currentUserName }
     } else {
         if (!inputValue.trim() && !selectedImage) return;
 
-        const newId = crypto.randomUUID();
+        const newId = generateUUID();
         messageToSend = {
             id: newId, 
             sender: currentUserName || 'Anonymous',
