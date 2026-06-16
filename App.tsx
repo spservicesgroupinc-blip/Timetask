@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { fetchTasks, saveTask, deleteTask, fetchMessages, fetchUsers, fetchJobs, fetchTimeEntries } from './services/sheetService';
+import { fetchTasks, saveTask, deleteTask, fetchMessages, fetchUsers, fetchJobs, fetchTimeEntries, setAuthToken, sendMessage } from './services/sheetService';
 import { Task, TaskStatus, ViewType, ChatMessage, UserProfile, JobOption, TimeEntry } from './types';
 import TaskModal from './components/TaskModal';
 import DayModal from './components/DayModal';
@@ -74,6 +74,13 @@ const App: React.FC = () => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
   const loadData = useCallback(async (isBackground = false) => {
+    // If no token exists yet, we don't fetch anything! Prevents pre-auth fetch failures.
+    const token = localStorage.getItem('truchoice_token');
+    if (!token) {
+        setIsLoading(false);
+        return;
+    }
+
     if (!isBackground) setIsLoading(true);
     
     try {
@@ -85,15 +92,6 @@ const App: React.FC = () => {
             fetchJobs(forceRefresh),
             fetchTimeEntries(forceRefresh)
         ]);
-        
-        // Restore user session if available
-        if (!currentUser) {
-            const storedUserId = localStorage.getItem('truchoice_userid');
-            if (storedUserId) {
-                const found = userData.find(u => u.id === storedUserId);
-                if (found) setCurrentUser(found);
-            }
-        }
 
         // Sort Tasks: Pending/In Progress first
         const sortedTasks = taskData.sort((a, b) => {
@@ -128,6 +126,23 @@ const App: React.FC = () => {
     }
   }, [currentView, currentUser]);
 
+  // Restore session on app launch
+  useEffect(() => {
+    const storedToken = localStorage.getItem('truchoice_token');
+    const storedUserStr = localStorage.getItem('truchoice_user');
+    if (storedToken && storedUserStr) {
+      try {
+        const parsedUser = JSON.parse(storedUserStr);
+        setAuthToken(storedToken);
+        setCurrentUser(parsedUser);
+      } catch (e) {
+        console.warn("Corrupt persistent session, clearing", e);
+        setAuthToken(null);
+        localStorage.removeItem('truchoice_user');
+      }
+    }
+  }, []);
+
   useEffect(() => {
     loadData(false);
     // Polling interval
@@ -161,7 +176,7 @@ const App: React.FC = () => {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     };
-  }, [loadData, currentView]);
+  }, [loadData, currentView, currentUser]);
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
@@ -191,11 +206,14 @@ const App: React.FC = () => {
   const handleLogin = (user: UserProfile) => {
     setCurrentUser(user);
     localStorage.setItem('truchoice_userid', user.id);
+    localStorage.setItem('truchoice_user', JSON.stringify(user));
   };
 
   const handleLogout = () => {
       setCurrentUser(null);
       localStorage.removeItem('truchoice_userid');
+      localStorage.removeItem('truchoice_user');
+      setAuthToken(null);
   };
 
   // --- Task Handlers ---
@@ -519,7 +537,24 @@ const App: React.FC = () => {
             <ChatView 
                 messages={messages}
                 currentUserName={currentUser.name}
-                onSendMessage={async (text, image) => {}}
+                onSendMessage={async (text, image) => {
+                    const newMsg: ChatMessage = {
+                        id: crypto.randomUUID(),
+                        sender: currentUser.name,
+                        text,
+                        image,
+                        timestamp: Date.now(),
+                        status: 'pending'
+                    };
+                    // Optimistic update
+                    setMessages(prev => [...prev, newMsg]);
+                    try {
+                        const sent = await sendMessage(newMsg);
+                        setMessages(prev => prev.map(m => m.id === newMsg.id ? sent : m));
+                    } catch (e) {
+                         setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, status: 'error' } : m));
+                    }
+                }}
             />
         )}
 
@@ -570,7 +605,8 @@ const App: React.FC = () => {
         task={editingTask}
         initialDate={newItemDate}
         availableJobs={jobs}
-        currentUser={currentUser.name}
+        currentUser={currentUser ? currentUser.name : ''}
+        users={users}
       />
       
       <NotePromptModal 

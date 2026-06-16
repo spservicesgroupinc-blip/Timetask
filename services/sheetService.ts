@@ -120,6 +120,9 @@ export const sendMessage = async (message: ChatMessage): Promise<ChatMessage> =>
         return { ...message, status: 'sent' };
     }
 
+    const token = getAuthToken();
+    if (!token) throw new Error("Unauthorized: Please sign in");
+
     try {
         const response = await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
             method: 'POST',
@@ -127,7 +130,8 @@ export const sendMessage = async (message: ChatMessage): Promise<ChatMessage> =>
             body: JSON.stringify({
                 action: 'create',
                 table: 'messages',
-                data: message
+                data: message,
+                token: token
             })
         }, 15000); // Image upload might take a bit
 
@@ -172,63 +176,105 @@ export const deleteJob = async (id: string): Promise<void> => {
 };
 
 
-// --- TIME CLOCK & REPORTS ---
+// --- AUTHENTICATION TOKEN STORE ---
 
-export const saveTimeEntryLocal = async (entry: TimeEntry): Promise<void> => {
-    const localKey = 'sitecommand_time_entries';
-    const currentEntries = JSON.parse(localStorage.getItem(localKey) || '[]');
-    
-    // Check if updating existing or new
-    const index = currentEntries.findIndex((e: TimeEntry) => e.id === entry.id);
-    let updatedEntries;
-    if (index >= 0) {
-        updatedEntries = [...currentEntries];
-        updatedEntries[index] = entry;
+let cachedToken: string | null = localStorage.getItem('truchoice_token') || null;
+
+export const setAuthToken = (token: string | null) => {
+    cachedToken = token;
+    if (token) {
+        localStorage.setItem('truchoice_token', token);
     } else {
-        updatedEntries = [entry, ...currentEntries];
+        localStorage.removeItem('truchoice_token');
     }
-    
-    localStorage.setItem(localKey, JSON.stringify(updatedEntries));
 };
 
-export const syncPendingTimeEntries = async (): Promise<void> => {
-    if (!GOOGLE_SCRIPT_URL) return;
+export const getAuthToken = () => cachedToken;
 
-    const localKey = 'sitecommand_time_entries';
-    const currentEntries: TimeEntry[] = JSON.parse(localStorage.getItem(localKey) || '[]');
-    const unsynced = currentEntries.filter(e => e.isSynced === false);
-
-    if (unsynced.length === 0) return;
+export const loginUserApi = async (email: string, password: string): Promise<{ token: string; user: UserProfile }> => {
+    if (!GOOGLE_SCRIPT_URL) {
+        // Mock fallback for local environment/tests
+        const mockUser: UserProfile = { id: 'admin-id', name: 'Admin', email, password, role: 'admin', rate: '50' };
+        const token = 'mock-jwt-token';
+        setAuthToken(token);
+        return { token, user: mockUser };
+    }
 
     try {
         const response = await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify({
-                action: 'syncTimeEntries',
-                data: unsynced
+                action: 'login',
+                data: { email, password }
             })
         }, 15000);
 
-        if (!response.ok) throw new Error("Sync failed network");
-        
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
         const result = await response.json();
-        if (result.status === 'success') {
-            // Mark as synced locally
-            const syncedIds = new Set(unsynced.map(e => e.id));
-            const updatedEntries = currentEntries.map(e => 
-                syncedIds.has(e.id) ? { ...e, isSynced: true } : e
-            );
-            localStorage.setItem(localKey, JSON.stringify(updatedEntries));
+        if (result.status === 'success' && result.data) {
+            const { token, user } = result.data;
+            setAuthToken(token);
+            return { token, user };
         }
-    } catch (e) {
-        console.error("Sync Time Entries Failed", e);
+        throw new Error(result.message || 'Invalid email or password.');
+    } catch (e: any) {
+        console.error("Login Error:", e);
         throw e;
     }
 };
 
+export const registerUserApi = async (name: string, email: string, password: string, role = 'admin'): Promise<{ token: string; user: UserProfile }> => {
+    if (!GOOGLE_SCRIPT_URL) {
+        // Mock fallback
+        const mockUser: UserProfile = { id: 'new-id', name, email, password, role, rate: '40' };
+        const token = 'mock-jwt-token';
+        setAuthToken(token);
+        return { token, user: mockUser };
+    }
+
+    try {
+        const response = await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+                action: 'register',
+                data: { name, email, password, role }
+            })
+        }, 15000);
+
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            const { token, user } = result.data;
+            setAuthToken(token);
+            return { token, user };
+        }
+        throw new Error(result.message || 'Registration failed.');
+    } catch (e: any) {
+        console.error("Register Error:", e);
+        throw e;
+    }
+};
+
+// --- TIME CLOCK & REPORTS ---
+
+export const saveTimeEntryLocal = async (entry: TimeEntry): Promise<void> => {
+    // Standard direct database creation or updates for perfect sheet-sync with NO local storage discrepancies
+    const isNew = entry.status === 'active';
+    await saveGeneric('time_entries', entry, isNew);
+};
+
+export const syncPendingTimeEntries = async (): Promise<void> => {
+    // No-op because saveTimeEntryLocal pushes directly to Apps Script immediately!
+    return;
+};
+
 export const generateReport = async (userId: string, startDate: string, endDate: string): Promise<string> => {
-    if (!GOOGLE_SCRIPT_URL) throw new Error("No backend");
+    if (!GOOGLE_SCRIPT_URL) throw new Error("No backend configured");
+
+    const token = getAuthToken();
+    if (!token) throw new Error("Unauthorized: Please sign in");
 
     try {
         const response = await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
@@ -236,21 +282,24 @@ export const generateReport = async (userId: string, startDate: string, endDate:
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify({
                 action: 'generateReport',
-                userId,
-                startDate,
-                endDate
+                token,
+                data: {
+                    userId,
+                    startDate,
+                    endDate
+                }
             })
-        }, 30000); // Longer timeout for PDF generation
+        }, 30000); // Longer timeout for report generation
 
         if (!response.ok) throw new Error("Report generation network error");
         
         const result = await response.json();
-        if (result.status === 'success' && result.url) {
-            return result.url;
+        if (result.status === 'success' && result.data && result.data.url) {
+            return result.data.url;
         }
         throw new Error(result.message || "Failed to generate report");
     } catch (e) {
-        console.error("Generate Report Error", e);
+        console.error("Generate Report Error:", e);
         throw e;
     }
 };
@@ -267,9 +316,22 @@ async function fetchGeneric<T>(table: 'tasks' | 'messages' | 'users' | 'jobs' | 
     return mockData;
   }
 
+  const token = getAuthToken();
+  if (!token) {
+    // If not logged in, return empty array (prevents unauthorized fetch errors in log console on mount)
+    return [];
+  }
+
   try {
-    const cacheBuster = `?table=${table}&nocache=${forceRefresh ? Date.now() : Math.floor(Date.now() / 30000)}`;
-    const response = await fetchWithTimeout(`${GOOGLE_SCRIPT_URL}${cacheBuster}`, {}, timeout);
+    const response = await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+            action: 'read',
+            table: table,
+            token: token
+        })
+    }, timeout);
     
     if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
     
@@ -290,8 +352,11 @@ async function fetchGeneric<T>(table: 'tasks' | 'messages' | 'users' | 'jobs' | 
   }
 }
 
-async function saveGeneric<T extends { id: string }>(table: 'tasks' | 'messages' | 'users' | 'jobs', item: T, isNew: boolean): Promise<T> {
+async function saveGeneric<T extends { id: string }>(table: 'tasks' | 'messages' | 'users' | 'jobs' | 'time_entries', item: T, isNew: boolean): Promise<T> {
   if (GOOGLE_SCRIPT_URL) {
+    const token = getAuthToken();
+    if (!token) throw new Error("Unauthorized: Please sign in");
+    
     try {
       const response = await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
         method: 'POST',
@@ -299,9 +364,10 @@ async function saveGeneric<T extends { id: string }>(table: 'tasks' | 'messages'
         body: JSON.stringify({
           action: isNew ? 'create' : 'update',
           table: table,
-          data: item
+          data: item,
+          token: token
         })
-      }, 8000);
+      }, 15000);
 
       if (!response.ok) {
           throw new Error(`Server returned ${response.status}`);
@@ -322,30 +388,34 @@ async function saveGeneric<T extends { id: string }>(table: 'tasks' | 'messages'
 
 async function forceClearCache(table: string) {
     if (!GOOGLE_SCRIPT_URL) return;
+    const token = getAuthToken();
+    if (!token) return;
     const tempId = 'cache_buster_' + Date.now();
     try {
         await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({ action: 'create', table: table, data: { id: tempId, name: 'temp cache buster', rate: 0, role: 'temp' } })
+            body: JSON.stringify({ action: 'create', table: table, data: { id: tempId, name: 'temp cache buster', rate: 0, role: 'temp' }, token: token })
         });
         await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({ action: 'delete', table: table, id: tempId, data: { id: tempId } })
+            body: JSON.stringify({ action: 'delete', table: table, id: tempId, data: { id: tempId }, token: token })
         });
     } catch(e) {
         console.warn("Forced cache clear failed:", e);
     }
 }
 
-async function deleteGeneric(table: 'tasks' | 'users' | 'jobs', id: string): Promise<void> {
+async function deleteGeneric(table: 'tasks' | 'users' | 'jobs' | 'time_entries', id: string): Promise<void> {
     if (GOOGLE_SCRIPT_URL) {
+        const token = getAuthToken();
+        if (!token) throw new Error("Unauthorized: Please sign in");
         try {
           const response = await fetchWithTimeout(GOOGLE_SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({ action: 'delete', table: table, id: id, data: { id } })
+            body: JSON.stringify({ action: 'delete', table: table, id: id, data: { id }, token: token })
           });
           
           if (!response.ok) throw new Error('Delete failed network');

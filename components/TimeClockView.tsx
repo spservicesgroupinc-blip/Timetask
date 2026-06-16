@@ -87,7 +87,7 @@ const TimeClockView: React.FC<Props> = ({ timeEntries, userName, hourlyRate, ava
           endTime: endTime,
           status: 'completed',
           totalPay: calculatedPay > 0 ? calculatedPay : undefined,
-          isSynced: false // Dirty
+          isSynced: true
         };
         setSelectedJob(''); // Clear input after clocking out
       } else {
@@ -103,11 +103,11 @@ const TimeClockView: React.FC<Props> = ({ timeEntries, userName, hourlyRate, ava
           endTime: null,
           status: 'active',
           jobName: selectedJob,
-          isSynced: false // Dirty
+          isSynced: true
         };
       }
       
-      // Save locally first (Optimistic)
+      // Save to Google Sheet immediately
       await saveTimeEntryLocal(updatedEntry);
       onOptimisticUpdate(updatedEntry);
       

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Task, TaskPriority, TaskStatus, JobOption } from '../types';
+import { Task, TaskPriority, TaskStatus, JobOption, UserProfile } from '../types';
 import { X, Plus, CheckCircle, Trash, Camera, Pencil, Briefcase, Clock, FileText } from './Icons';
 import { parseDescription, serializeDescription, ChecklistItem } from '../utils/checklist';
 import { ImageEditor } from './ImageEditor';
@@ -14,9 +14,10 @@ interface Props {
   initialDate?: string;
   availableJobs: JobOption[];
   currentUser?: string;
+  users: UserProfile[];
 }
 
-const TaskModal: React.FC<Props> = ({ isOpen, onClose, onSave, task, initialDate, availableJobs, currentUser }) => {
+const TaskModal: React.FC<Props> = ({ isOpen, onClose, onSave, task, initialDate, availableJobs, currentUser, users }) => {
   const [baseData, setBaseData] = useState<Task>({
     id: '',
     title: '',
@@ -459,13 +460,19 @@ const TaskModal: React.FC<Props> = ({ isOpen, onClose, onSave, task, initialDate
                         </div>
                         <div>
                             <label className="block text-xs font-semibold text-slate-400 mb-1">Assigned To</label>
-                            <input
-                              type="text"
+                            <select
                               value={baseData.assignedTo}
                               onChange={(e) => setBaseData({ ...baseData, assignedTo: e.target.value })}
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:border-orange-500"
-                              placeholder="Name"
-                            />
+                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-orange-500 focus:border-orange-500 font-medium"
+                            >
+                              <option value="">Unassigned</option>
+                              {users.map(u => (
+                                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                              ))}
+                              {baseData.assignedTo && !users.some(u => u.id === baseData.assignedTo || u.name === baseData.assignedTo) && (
+                                <option value={baseData.assignedTo}>{baseData.assignedTo}</option>
+                              )}
+                            </select>
                         </div>
                         <div className="sm:col-span-2">
                             <label className="block text-xs font-semibold text-slate-400 mb-1">Location / Address</label>

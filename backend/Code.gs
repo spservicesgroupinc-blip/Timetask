@@ -1,52 +1,89 @@
 // ==========================================
-// TRUCHOICE ROOFING - BACKEND V6.1 (NO-FIREBASE)
+// TRUCHOICE ROOFING - BACKEND V7.0 (SECURE & OPTIMIZED)
 // ==========================================
 
 const CONFIG = {
   FOLDER_NAME: "TruChoice Photos",
   REPORT_FOLDER_NAME: "TruChoice Pay Reports",
-  USE_CACHE: false, // Set to true to enable high-speed Google CacheService
-  CACHE_TTL: 600,   // Keep cached data in memory for 10 minutes (600 seconds)
+  USE_CACHE: true, // High-speed Google CacheService enabled
+  CACHE_TTL: 600,   // 10 minutes
+  // Fetch these from Script Properties (Extensions > Script Properties) for production
+  JWT_SECRET: PropertiesService.getScriptProperties().getProperty('JWT_SECRET') || 'super_secret_key_change_in_script_properties',
+  PASSWORD_SALT: PropertiesService.getScriptProperties().getProperty('PASSWORD_SALT') || 'default_salt_change_me',
   SHEETS: {
-    tasks: { name: "Tasks", headers: ["id", "title", "description", "location", "assignedTo", "dueDate", "priority", "status", "createdAt", "image", "jobName", "startedAt", "jobNotes"] },
-    messages: { name: "Messages", headers: ["id", "sender", "text", "timestamp", "image"] },
-    users: { name: "Users", headers: ["id", "name", "rate", "role", "pin", "email", "password"] },
-    jobs: { name: "Jobs", headers: ["id", "name", "address", "active"] },
-    subscriptions: { name: "Subscriptions", headers: ["endpoint", "p256dh", "auth", "userId", "userAgent", "updatedAt"] },
-    time_entries: { name: "TimeEntries", headers: ["id", "userId", "startTime", "endTime", "status", "jobName", "totalPay"] }
+    tasks: { name: "Tasks", headers: ["id", "title", "description", "location", "assignedTo", "dueDate", "priority", "status", "createdAt", "image", "jobName", "startedAt", "jobNotes"], roles: ['admin', 'manager', 'employee'] },
+    messages: { name: "Messages", headers: ["id", "sender", "text", "timestamp", "image"], roles: ['admin', 'manager', 'employee'] },
+    users: { name: "Users", headers: ["id", "name", "rate", "role", "pin", "email", "password"], roles: ['admin'] }, // Strict RBAC: Only admins touch user table
+    jobs: { name: "Jobs", headers: ["id", "name", "address", "active"], roles: ['admin', 'manager'] },
+    subscriptions: { name: "Subscriptions", headers: ["endpoint", "p256dh", "auth", "userId", "userAgent", "updatedAt"], roles: ['admin', 'manager', 'employee'] },
+    time_entries: { name: "TimeEntries", headers: ["id", "userId", "startTime", "endTime", "status", "jobName", "totalPay"], roles: ['admin', 'manager', 'employee'] }
   }
 };
 
 // ==========================================
-// 1. ENTRY POINTS
+// ERROR HANDLING CLASSES
 // ==========================================
+class AppError extends Error {
+  constructor(message, code = 500) {
+    super(message);
+    this.code = code;
+  }
+}
+class AuthError extends AppError {
+  constructor(message, code = 401) {
+    super(message, code);
+  }
+}
 
+// ==========================================
+// 1. ENTRY POINTS & ROUTING
+// ==========================================
 function doGet(e) { return handleRequest(e); }
 function doPost(e) { return handleRequest(e); }
 
 function handleRequest(e) {
   try {
     const request = parseRequest(e);
-    let result = null;
-    
-    if (!request) {
-      return responseJSON({ status: 'error', message: 'Invalid request' });
+    if (!request) throw new AppError("Invalid request format", 400);
+
+    // Public endpoints (No Auth Required)
+    if (['login', 'register', 'setup'].includes(request.action)) {
+      let result;
+      if (request.action === 'login') result = loginUser(request.data);
+      else if (request.action === 'register') result = registerUser(request.data);
+      else if (request.action === 'setup') result = doSetup();
+      
+      return responseJSON({ status: 'success', data: result });
     }
 
-    // READ actions bypass script lock for speed and high concurrent access
+    // Auth Check (JWT Validation)
+    const token = request.token;
+    if (!token) throw new AuthError("Unauthorized: Token missing", 401);
+    
+    const user = verifyToken(token);
+    if (!user) throw new AuthError("Unauthorized: Invalid or expired token", 401);
+    
+    request.user = user; // Attach user context to request
+
+    // AuthZ Check (Role-Based Access Control)
+    if (!isAuthorized(request)) {
+       throw new AppError("Forbidden: Insufficient permissions", 403);
+    }
+
+    let result = null;
+    
+    // READ actions bypass script lock for speed
     if (request.action === 'read') {
       result = getCachedData(request.tableName);
       if (!result) {
-        result = readData(request.tableName);
+        result = readData(request.tableName, user);
         setCachedData(request.tableName, result);
       }
     } 
-    // WRITE actions use the script lock to prevent spreadsheet data corruption
+    // WRITE actions use the script lock
     else {
       const lock = LockService.getScriptLock();
-      if (!lock.tryLock(10000)) {
-        return responseJSON({ status: 'error', message: 'Server busy. Please try again.' });
-      }
+      if (!lock.tryLock(10000)) throw new AppError("Server busy. Please try again.", 429);
 
       let runNotification = false;
       try {
@@ -68,27 +105,25 @@ function handleRequest(e) {
             result = saveSubscription(request.data);
             clearCache('subscriptions');
             break;
-          case 'setup':
-            result = doSetup();
+          case 'generateReport':
+            result = generateReport(request.data);
             break;
           default:
-            throw new Error("Invalid action: " + request.action);
+            throw new AppError("Invalid action: " + request.action, 400);
         }
       } finally {
         lock.releaseLock();
       }
 
-      // Execute non-blocking actions after releasing the database lock
-      if (runNotification) {
-        triggerNotification(request.tableName, request.data);
-      }
+      if (runNotification) triggerNotification(request.tableName, request.data);
     }
 
     return responseJSON({ status: 'success', data: result });
 
   } catch (err) {
     console.error("Execution Error", err);
-    return responseJSON({ status: 'error', message: err.toString() });
+    const code = err.code || 500;
+    return responseJSON({ status: 'error', message: err.message, code: code });
   }
 }
 
@@ -96,14 +131,17 @@ function parseRequest(e) {
   if (!e) return null;
   if (e.parameter && e.parameter.setup) return { action: 'setup' };
   
+  let token = e.parameter.token || null;
+  
   if (e.postData && e.postData.contents) {
     try {
       const json = JSON.parse(e.postData.contents);
       return {
         action: json.action || 'read',
-        tableName: (json.table || 'tasks').toLowerCase(),
+        tableName: json.table ? json.table.toLowerCase() : null,
         data: json.data || {}, 
-        id: json.id || (json.data && !Array.isArray(json.data) ? json.data.id : null)
+        id: json.id || (json.data && !Array.isArray(json.data) ? json.data.id : null),
+        token: json.token || token
       };
     } catch(err) {
       return null;
@@ -112,15 +150,164 @@ function parseRequest(e) {
   
   return {
     action: 'read',
-    tableName: (e.parameter.table || 'tasks').toLowerCase()
+    tableName: (e.parameter.table || 'tasks').toLowerCase(),
+    token: token
   };
 }
 
 // ==========================================
-// 2. DATA OPERATIONS (OPTIMIZED)
+// 2. AUTHENTICATION & AUTHORIZATION
 // ==========================================
+function hashPassword(password) {
+  const raw = CONFIG.PASSWORD_SALT + password;
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw);
+  return digest.map(b => ('0' + (b < 0 ? b + 256 : b).toString(16)).slice(-2)).join('');
+}
 
-function readData(tableName) {
+function b64Encode(str) {
+  return Utilities.base64Encode(str).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function generateToken(user) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const payload = {
+    userId: user.id,
+    email: user.email,
+    role: user.role,
+    name: user.name,
+    exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24) // 24 hours expiration
+  };
+  
+  const b64Header = b64Encode(JSON.stringify(header));
+  const b64Payload = b64Encode(JSON.stringify(payload));
+  
+  const signatureInput = b64Header + "." + b64Payload;
+  const signatureBytes = Utilities.computeHmacSha256Signature(signatureInput, CONFIG.JWT_SECRET);
+  const signature = Utilities.base64Encode(signatureBytes).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  
+  return `${b64Header}.${b64Payload}.${signature}`;
+}
+
+function verifyToken(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    
+    const [b64Header, b64Payload, b64Signature] = parts;
+    const signatureInput = b64Header + "." + b64Payload;
+    
+    const expectedBytes = Utilities.computeHmacSha256Signature(signatureInput, CONFIG.JWT_SECRET);
+    const expectedSignature = Utilities.base64Encode(expectedBytes).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    
+    if (expectedSignature !== b64Signature) return null; // Invalid signature
+    
+    let b64 = b64Payload.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '='; // Fix padding
+    const payloadBytes = Utilities.base64Decode(b64);
+    const payloadStr = Utilities.newBlob(payloadBytes).getDataAsString();
+    const payload = JSON.parse(payloadStr);
+    
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+      return null; // Token expired
+    }
+    
+    return payload;
+  } catch (e) {
+    console.error("Token verification failed:", e);
+    return null;
+  }
+}
+
+function loginUser(data) {
+  if (!data) data = {};
+  const { email, password } = data;
+  if (!email || !password) throw new AuthError("Email and password are required", 400);
+
+  const sheet = getSheet('users');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) throw new AuthError("No users found", 401);
+
+  const values = sheet.getDataRange().getValues();
+  const headers = getHeaders(sheet);
+  const emailIdx = headers.indexOf('email');
+  const passIdx = headers.indexOf('password');
+  const roleIdx = headers.indexOf('role');
+  const nameIdx = headers.indexOf('name');
+  const idIdx = headers.indexOf('id');
+
+  const hashedPassword = hashPassword(password);
+  const targetEmail = String(email || '').trim().toLowerCase();
+
+  for (let i = 1; i < values.length; i++) {
+    const rowEmail = String(values[i][emailIdx] || '').trim().toLowerCase();
+    const rowName = String(values[i][nameIdx] || '').trim().toLowerCase();
+    const rowPass = String(values[i][passIdx] || '');
+    if ((rowEmail === targetEmail || rowName === targetEmail) && rowPass === hashedPassword) {
+      const user = {
+        id: values[i][idIdx],
+        email: values[i][emailIdx],
+        role: values[i][roleIdx],
+        name: values[i][nameIdx]
+      };
+      const token = generateToken(user);
+      return { token, user };
+    }
+  }
+  throw new AuthError("Invalid credentials", 401);
+}
+
+function registerUser(data) {
+  if (!data) data = {};
+  const { name, email, password, role } = data;
+  if (!name || !email || !password) throw new AuthError("Missing fields", 400);
+
+  const sheet = getSheet('users');
+  const headers = getHeaders(sheet);
+  const values = sheet.getDataRange().getValues();
+  const emailIdx = headers.indexOf('email');
+  const targetEmail = String(email || '').trim().toLowerCase();
+  
+  for(let i = 1; i < values.length; i++) {
+    if(String(values[i][emailIdx] || '').trim().toLowerCase() === targetEmail) throw new AuthError("Email already exists", 409);
+  }
+
+  const newUser = {
+    id: Utilities.getUuid(),
+    name,
+    email,
+    password: hashPassword(password),
+    role: role || 'employee',
+    rate: '',
+    pin: ''
+  };
+
+  createItem('users', newUser);
+  const token = generateToken(newUser);
+  return { token, user: { ...newUser, password: undefined } };
+}
+
+function isAuthorized(request) {
+  const user = request.user;
+  
+  if (!request.tableName) {
+    if (['saveSubscription', 'generateReport'].includes(request.action)) return true;
+    return false;
+  }
+
+  const tableConfig = CONFIG.SHEETS[request.tableName];
+  if (!tableConfig) return false;
+  
+  if (request.action === 'read') return true;
+  
+  if (!tableConfig.roles) return true;
+  
+  return tableConfig.roles.includes(user.role);
+}
+
+// ==========================================
+// 3. DATA OPERATIONS (OPTIMIZED)
+// ==========================================
+function readData(tableName, user) {
   const sheet = getSheet(tableName);
   const lastRow = sheet.getLastRow();
   
@@ -130,27 +317,12 @@ function readData(tableName) {
   const headers = values[0];
   const rows = values.slice(1);
 
-  let hasUpdates = false;
-  const idIndex = headers.indexOf('id');
-
-  const result = rows.map((row, rIndex) => {
+  let result = rows.map(row => {
     const item = {};
-    
-    // Auto-generate missing IDs for manually added rows
-    if (idIndex > -1 && (!row[idIndex] || String(row[idIndex]).trim() === '')) {
-       row[idIndex] = Utilities.getUuid();
-       values[rIndex + 1][idIndex] = row[idIndex];
-       hasUpdates = true;
-    }
-
     headers.forEach((header, i) => {
       let val = row[i];
       if (val instanceof Date) {
-        if (['createdAt', 'timestamp', 'startTime', 'endTime', 'updatedAt', 'startedAt'].includes(header)) {
-          item[header] = val.getTime();
-        } else {
-          item[header] = formatLocalDate(val);
-        }
+        item[header] = ['createdAt', 'timestamp', 'startTime', 'endTime', 'updatedAt', 'startedAt'].includes(header) ? val.getTime() : formatLocalDate(val);
       } else {
         item[header] = val;
       }
@@ -158,8 +330,23 @@ function readData(tableName) {
     return item;
   });
 
-  if (hasUpdates) {
-     sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
+  if (tableName === 'users') {
+    result = result.map(u => {
+      const { password, pin, ...safeUser } = u;
+      return safeUser;
+    });
+  }
+
+  // Row-Level Security: Filter data for standard employees
+  if (user && user.role === 'employee') {
+     if (tableName === 'time_entries') {
+        result = result.filter(item => String(item.userId || '').toLowerCase().trim() === String(user.userId || '').toLowerCase().trim() || String(item.userId || '').toLowerCase().trim() === String(user.name || '').toLowerCase().trim());
+     } else if (tableName === 'tasks') {
+        result = result.filter(item => {
+           const assigned = String(item.assignedTo || '').toLowerCase().trim();
+           return assigned === String(user.userId || '').toLowerCase().trim() || assigned === String(user.name || '').toLowerCase().trim();
+        });
+     }
   }
 
   return result;
@@ -169,7 +356,6 @@ function createItem(tableName, data) {
   const sheet = getSheet(tableName);
   const headers = getHeaders(sheet);
   
-  // Ensure we assign a unique ID if none is supplied by the frontend
   if (headers.includes("id") && !data.id) {
     data.id = Utilities.getUuid();
   }
@@ -192,7 +378,6 @@ function updateItem(tableName, data) {
   const idIndex = headers.indexOf('id');
   if (idIndex === -1) throw new Error("No 'id' column found in table " + tableName);
   
-  // High-performance index lookup using a flat column search on the correct 'id' column
   const ids = sheet.getRange(2, idIndex + 1, lastRow - 1, 1).getValues().flat().map(String).map(s => s.trim());
   const targetId = String(data.id).trim();
   const index = ids.indexOf(targetId); 
@@ -204,7 +389,6 @@ function updateItem(tableName, data) {
     data.image = processImageUpload(data.image, data.id);
   }
 
-  // Prevent data loss: Fetch existing row values so that omitted properties are not overwritten
   const existingRow = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
   const rowData = headers.map((h, i) => (data[h] !== undefined) ? data[h] : existingRow[i]); 
   
@@ -221,7 +405,6 @@ function deleteItem(tableName, id) {
   const idIndex = headers.indexOf('id');
   if (idIndex === -1) throw new Error("No 'id' column found in table " + tableName);
   
-  // High-performance index lookup using a flat column search on the correct 'id' column
   const ids = sheet.getRange(2, idIndex + 1, lastRow - 1, 1).getValues().flat().map(String).map(s => s.trim());
   const targetId = String(id).trim();
   const index = ids.indexOf(targetId);
@@ -233,9 +416,8 @@ function deleteItem(tableName, id) {
 }
 
 // ==========================================
-// 3. CACHING SYSTEM (OPTIONAL LAYER)
+// 4. CACHING SYSTEM
 // ==========================================
-
 function getCachedData(key) {
   if (!CONFIG.USE_CACHE) return null;
   try {
@@ -262,7 +444,7 @@ function setCachedData(key, data) {
     const raw = JSON.stringify(data);
     clearCache(key);
 
-    const chunkSize = 90 * 1024; // Chunking bypasses Google's 100KB cache key limit
+    const chunkSize = 90 * 1024; 
     let chunkIndex = 0;
     for (let i = 0; i < raw.length; i += chunkSize) {
       const chunk = raw.substring(i, i + chunkSize);
@@ -291,9 +473,8 @@ function clearCache(key) {
 }
 
 // ==========================================
-// 4. PUSH NOTIFICATIONS PLACEHOLDER
+// 5. PUSH NOTIFICATIONS & SUBSCRIPTIONS
 // ==========================================
-
 function saveSubscription(subData) {
   const sheet = getSheet('subscriptions');
   const lastRow = sheet.getLastRow();
@@ -327,15 +508,12 @@ function saveSubscription(subData) {
 }
 
 function triggerNotification(tableName, data) {
-  // Since Firebase is disabled, we keep this as a lightweight, non-blocking placeholder.
-  // Storing subscriptions remains supported above, but sending push notifications is turned off
-  // to avoid network timeouts and eliminate external script dependencies.
+  // Placeholder for Web Push API execution
 }
 
 // ==========================================
-// 5. FILE OPERATIONS
+// 6. FILE OPERATIONS
 // ==========================================
-
 function getFolderId(folderName, propKey) {
   const props = PropertiesService.getScriptProperties();
   let id = props.getProperty(propKey);
@@ -343,11 +521,9 @@ function getFolderId(folderName, propKey) {
   if (id) {
     try {
       const folder = DriveApp.getFolderById(id);
-      folder.getName(); // Fast verification to ensure folder access is valid
+      folder.getName(); 
       return folder;
-    } catch(e) {
-      // Clear reference if folder was deleted or is inaccessible
-    }
+    } catch(e) {}
   }
 
   const folders = DriveApp.getFoldersByName(folderName);
@@ -382,10 +558,6 @@ function processImageUpload(base64String, id) {
     const blob = Utilities.newBlob(decoded, contentType, fileName);
     
     const file = folder.createFile(blob);
-    
-    // Performance optimization: Manual setSharing() calls are avoided here.
-    // Files inside the parent folder automatically inherit the public view permissions.
-    
     return "https://drive.google.com/thumbnail?sz=w1000&id=" + file.getId();
   } catch (e) {
     console.error("Image upload warning:", e);
@@ -394,9 +566,8 @@ function processImageUpload(base64String, id) {
 }
 
 // ==========================================
-// 6. HELPER FUNCTIONS
+// 7. HELPER FUNCTIONS
 // ==========================================
-
 function getSheet(key) {
   const config = CONFIG.SHEETS[key];
   if (!config) throw new Error("Unknown table: " + key);
@@ -410,7 +581,6 @@ function getSheet(key) {
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, config.headers.length).setFontWeight("bold");
   } else {
-    // Optimization: Compare current headers and write only if a physical schema change occurred
     const currentHeaders = sheet.getRange(1, 1, 1, config.headers.length).getValues()[0];
     const isDifferent = currentHeaders.some((h, i) => h !== config.headers[i]);
     if (isDifferent) {
@@ -424,12 +594,11 @@ function getSheet(key) {
 function getHeaders(sheet) {
   const lastCol = sheet.getLastColumn();
   if (lastCol < 1) return [];
-  return sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  return sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String).map(h => h.trim().toLowerCase());
 }
 
 function formatLocalDate(date) {
   if (!(date instanceof Date) || isNaN(date.getTime())) return "";
-  // High-speed V8 conversion - bypasses slow native API bridge calls to Utilities.formatDate()
   const offset = date.getTimezoneOffset();
   const adjusted = new Date(date.getTime() - (offset * 60 * 1000));
   return adjusted.toISOString().split('T')[0];
@@ -455,7 +624,117 @@ function doSetup() {
     }
   });
 
+  // Automatically create default Admin if no users exist
+  const usersSheet = getSheet('users');
+  if (usersSheet.getLastRow() < 2) {
+    try {
+      const adminUser = {
+        id: Utilities.getUuid(),
+        name: "Admin",
+        email: "admin@truchoice.com",
+        password: hashPassword("admin123"), // Default Password
+        role: "admin",
+        rate: "",
+        pin: ""
+      };
+      createItem('users', adminUser);
+      results.push("Default admin user created (admin@truchoice.com / admin123)");
+    } catch(e) {
+      results.push("Admin creation error: " + e.message);
+    }
+  }
+
   return results;
+}
+
+function generateReport(data) {
+  const { userId, startDate, endDate } = data;
+  if (!userId || !startDate || !endDate) {
+    throw new AppError("userId, startDate, and endDate are required", 400);
+  }
+
+  const startMs = new Date(startDate).getTime();
+  const endMs = new Date(endDate).getTime();
+
+  // Read time entries
+  const sheet = getSheet('time_entries');
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) throw new AppError("No time entries found to report", 404);
+
+  const headers = values[0];
+  const rows = values.slice(1);
+  const uIdx = headers.indexOf('userId');
+  const sIdx = headers.indexOf('startTime');
+  const eIdx = headers.indexOf('endTime');
+  const jobIdx = headers.indexOf('jobName');
+  const payIdx = headers.indexOf('totalPay');
+
+  // Filter entries
+  const userEntries = [];
+  let totalMinutes = 0;
+  let totalEarnings = 0;
+
+  rows.forEach(row => {
+    if (String(row[uIdx]) === String(userId)) {
+      const sTime = Number(row[sIdx]);
+      if (sTime >= startMs && sTime <= endMs) {
+        const eTime = Number(row[eIdx]) || Date.now();
+        const durationMin = Math.round((eTime - sTime) / (1000 * 60));
+        const pay = Number(row[payIdx]) || 0;
+        
+        userEntries.push({
+          date: formatLocalDate(new Date(sTime)),
+          job: row[jobIdx] || 'General',
+          startTime: new Date(sTime).toLocaleTimeString(),
+          endTime: row[eIdx] ? new Date(eTime).toLocaleTimeString() : 'ActiveNow',
+          durationHrs: (durationMin / 60).toFixed(2),
+          pay: pay.toFixed(2)
+        });
+
+        totalMinutes += durationMin;
+        totalEarnings += pay;
+      }
+    }
+  });
+
+  if (userEntries.length === 0) {
+    throw new AppError("No records found for specified user and period", 404);
+  }
+
+  // Create document in reports folder
+  const folder = getFolderId(CONFIG.REPORT_FOLDER_NAME, 'FOLDER_ID_REPORTS');
+  const fileName = `TruChoice_PayReport_${userId}_${Date.now()}.txt`;
+  
+  // Style report text
+  let reportText = `========================================\nTRUCHOICE PRODUCTION - PAY REPORT\n========================================\n\n`;
+  reportText += `User ID: ${userId}\n`;
+  reportText += `Period: ${startDate.split('T')[0]} to ${endDate.split('T')[0]}\n`;
+  reportText += `Generated At: ${new Date().toLocaleString()}\n\n`;
+  reportText += `SUMMARY:\n`;
+  reportText += `----------------------------------------\n`;
+  reportText += `Total Hours: ${(totalMinutes / 60).toFixed(2)} hrs\n`;
+  reportText += `Total Earnings: $${totalEarnings.toFixed(2)}\n\n`;
+  reportText += `DETAILED LOGS:\n`;
+  reportText += `----------------------------------------\n`;
+  reportText += `Date        | Job Name             | Start-End           | Hours   | Paid \n`;
+  reportText += `----------------------------------------\n`;
+  
+  userEntries.forEach(e => {
+    const dStr = e.date.padEnd(11);
+    const jStr = String(e.job).slice(0, 20).padEnd(20);
+    const timeStr = `${e.startTime}-${e.endTime}`.padEnd(21);
+    const hStr = e.durationHrs.padEnd(7);
+    const pStr = `$${e.pay}`;
+    reportText += `${dStr} | ${jStr} | ${timeStr} | ${hStr} | ${pStr}\n`;
+  });
+  
+  reportText += `\n========================================\nEnd of Report\n========================================`;
+
+  const blob = Utilities.newBlob(reportText, 'text/plain', fileName);
+  const file = folder.createFile(blob);
+  
+  // Return file viewer URL
+  return { url: file.getUrl() };
 }
 
 function responseJSON(data) {
