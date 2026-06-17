@@ -49,7 +49,7 @@ const ActiveTimer = React.memo(({ startTime, hourlyRate }: { startTime: number, 
             ) : (
                 <div className="text-slate-400 text-xs flex items-center gap-1">
                     <AlertTriangle size={12} />
-                    <span>Rate not set. Contact admin for pay tracking.</span>
+                    <span>Rate not set. Update in dashboard for pay tracking.</span>
                 </div>
             )}
         </div>

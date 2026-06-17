@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { UserProfile, JobOption, Task, TaskStatus, TaskPriority } from '../types';
+import { UserProfile, JobOption, Task, TaskStatus, TaskPriority, TimeEntry } from '../types';
 import { Trash, Plus, User, Briefcase, MapPin, X, Clock, Sparkles, LayoutList, CheckCircle } from './Icons';
 import { saveUser, deleteUser, saveJob, deleteJob, saveTask, deleteTask } from '../services/sheetService';
 import { generateUUID } from '@/utils/uuid';
@@ -9,6 +9,7 @@ interface Props {
   users: UserProfile[];
   jobs: JobOption[];
   tasks: Task[];
+  timeEntries: TimeEntry[];
   onRefresh: () => void;
   onClose: () => void;
 }
@@ -87,7 +88,7 @@ const LiveTimer = ({ startTime }: { startTime: number }) => {
     return <span className="font-mono">{hours}h {minutes}m</span>;
 };
 
-const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: propTasks, onRefresh, onClose }) => {
+const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: propTasks, timeEntries, onRefresh, onClose }) => {
   const [activeTab, setActiveTab] = useState<'live' | 'users' | 'jobs' | 'tasks'>('live');
   
   // Optimistic State Management
@@ -279,8 +280,8 @@ const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: p
                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
                     <div className="grid grid-cols-2 gap-4">
                         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-                            <div className="text-xs font-bold text-slate-400 uppercase">Tasks In Progress</div>
-                            <div className="text-3xl font-bold text-slate-900 mt-1">{activeTasks.length}</div>
+                            <div className="text-xs font-bold text-slate-400 uppercase">People Clocked In</div>
+                            <div className="text-3xl font-bold text-slate-900 mt-1">{timeEntries.filter(t => t.status === 'active').length}</div>
                         </div>
                         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
                             <div className="text-xs font-bold text-slate-400 uppercase">Total Team Size</div>
@@ -292,34 +293,41 @@ const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: p
                              <h3 className="font-bold text-slate-800">Who is working now?</h3>
                              <button onClick={onRefresh} className="text-xs text-orange-600 font-bold hover:underline">Refresh Data</button>
                         </div>
-                        {activeTasks.length === 0 ? (
+                        {timeEntries.filter(t => t.status === 'active').length === 0 ? (
                             <div className="bg-slate-100 rounded-xl p-8 text-center text-slate-400 italic">
-                                No tasks currently in progress.
+                                No one is currently clocked in.
                             </div>
                         ) : (
                             <div className="space-y-3">
-                                {activeTasks.map(task => (
-                                    <div key={task.id} className="bg-white p-4 rounded-xl shadow-md border-l-4 border-l-orange-500 flex justify-between items-center relative overflow-hidden">
-                                        <div className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(249,115,22,0.6)]"></div>
-                                        <div>
-                                            <div className="font-bold text-lg text-slate-900 flex items-center gap-2">
-                                                {task.assignedTo || 'Unassigned'}
-                                            </div>
-                                            <div className="text-sm text-slate-500 mt-1 font-medium">{task.title}</div>
-                                            <div className="text-xs text-orange-600 mt-1 flex items-center gap-1 font-semibold">
-                                                <Briefcase size={12} /> {task.jobName || 'General Task'}
-                                            </div>
-                                        </div>
-                                        <div className="text-right">
-                                            {task.startedAt && (
-                                                <div className="bg-orange-50 text-orange-700 px-3 py-1 rounded-lg font-bold text-sm flex items-center gap-2">
-                                                    <Clock size={16} />
-                                                    <LiveTimer startTime={task.startedAt} />
+                                {timeEntries.filter(t => t.status === 'active').map(entry => {
+                                    const user = users.find(u => u.id === entry.userId);
+                                    // See if they have an active task
+                                    const task = tasks.find(t => t.assignedTo === user?.name && t.status === TaskStatus.IN_PROGRESS);
+                                    return (
+                                        <div key={entry.id} className="bg-white p-4 rounded-xl shadow-md border-l-4 border-l-green-500 flex justify-between items-center relative overflow-hidden">
+                                            <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+                                            <div>
+                                                <div className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                                                    {user ? user.name : 'Unknown User'}
                                                 </div>
-                                            )}
+                                                {task ? (
+                                                    <div className="text-sm text-slate-500 mt-1 font-medium">{task.title}</div>
+                                                ) : (
+                                                    <div className="text-sm text-slate-400 mt-1 italic">General Labor / Unassigned Task</div>
+                                                )}
+                                                <div className="text-xs text-green-600 mt-1 flex items-center gap-1 font-semibold">
+                                                    <Briefcase size={12} /> {entry.jobName || task?.jobName || 'General Pay'}
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="bg-green-50 text-green-700 px-3 py-1 rounded-lg font-bold text-sm flex items-center gap-2 mt-1">
+                                                    <Clock size={16} />
+                                                    <LiveTimer startTime={entry.startTime} />
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    )
+                                })}
                             </div>
                         )}
                     </div>

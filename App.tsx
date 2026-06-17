@@ -20,6 +20,12 @@ const hasDataChanged = (prev: any[], next: any[]) => {
     return JSON.stringify(prev) !== JSON.stringify(next);
 };
 
+declare global {
+  interface Window {
+    currentViewRef: string;
+  }
+}
+
 const deduplicateById = <T extends { id?: any }>(arr: T[]): T[] => {
   const seen = new Set<string>();
   return arr.map((item, idx) => {
@@ -72,6 +78,36 @@ const App: React.FC = () => {
 
   // Desktop Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  
+  const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
+
+  useEffect(() => {
+     window.currentViewRef = currentView;
+     if (currentView === 'chat') {
+         setHasUnreadMessages(false);
+         // clear badge if API supported
+         if (navigator.clearAppBadge) {
+             navigator.clearAppBadge().catch(console.warn);
+         }
+     }
+  }, [currentView]);
+
+  useEffect(() => {
+    const handleNewMessage = () => {
+        setHasUnreadMessages(true);
+        if (Notification.permission === 'granted') {
+             new Notification("New Message", {
+                 body: "You have a new message in Chat",
+                 icon: 'https://cdn-icons-png.flaticon.com/512/2965/2965359.png'
+             });
+        }
+        if (navigator.setAppBadge) {
+             navigator.setAppBadge(1).catch(console.warn);
+        }
+    };
+    window.addEventListener('new_chat_message', handleNewMessage);
+    return () => window.removeEventListener('new_chat_message', handleNewMessage);
+  }, []);
 
   const loadData = useCallback(async (isBackground = false) => {
     // If no token exists yet, we don't fetch anything! Prevents pre-auth fetch failures.
@@ -85,12 +121,13 @@ const App: React.FC = () => {
     
     try {
         const forceRefresh = true; // Always force refresh to get latest data from Sheets
-        // Fetch core data (Tasks, Users, Jobs, TimeEntries)
-        const [taskData, userData, jobData, entryData] = await Promise.all([
+        // Fetch core data (Tasks, Users, Jobs, TimeEntries, Messages)
+        const [taskData, userData, jobData, entryData, msgsData] = await Promise.all([
             fetchTasks(forceRefresh), 
             fetchUsers(forceRefresh),
             fetchJobs(forceRefresh),
-            fetchTimeEntries(forceRefresh)
+            fetchTimeEntries(forceRefresh),
+            fetchMessages(forceRefresh)
         ]);
 
         // Sort Tasks: Pending/In Progress first
@@ -104,19 +141,28 @@ const App: React.FC = () => {
         const uniqueUsers = deduplicateById(userData);
         const uniqueJobs = deduplicateById(jobData);
         const uniqueEntries = deduplicateById(entryData);
+        const uniqueMsgs = deduplicateById(msgsData);
 
         // Smart State Updates (only if changed)
         setTasks(prev => hasDataChanged(prev, uniqueTasks) ? uniqueTasks : prev);
         setUsers(prev => hasDataChanged(prev, uniqueUsers) ? uniqueUsers : prev);
         setJobs(prev => hasDataChanged(prev, uniqueJobs) ? uniqueJobs : prev);
         setTimeEntries(prev => hasDataChanged(prev, uniqueEntries) ? uniqueEntries : prev);
-
-        // Fetch Messages if in chat view (to keep it fresh)
-        if (currentView === 'chat') {
-            const msgs = await fetchMessages();
-            const uniqueMsgs = deduplicateById(msgs);
-            setMessages(prev => hasDataChanged(prev, uniqueMsgs) ? uniqueMsgs : prev);
-        }
+        
+        setMessages(prev => {
+            if (hasDataChanged(prev, uniqueMsgs)) {
+                 // Check if new messages arrived and we are not in chat view
+                 if (prev.length > 0 && uniqueMsgs.length > prev.length) {
+                     const newMessages = uniqueMsgs.slice(prev.length);
+                     const hasOtherMessages = newMessages.some(m => currentUser && m.sender !== currentUser.name);
+                     if (hasOtherMessages && window.currentViewRef !== 'chat') {
+                          window.dispatchEvent(new CustomEvent('new_chat_message'));
+                     }
+                 }
+                 return uniqueMsgs;
+            }
+            return prev;
+        });
 
         checkDueTasks(uniqueTasks);
     } catch (e) {
@@ -207,6 +253,9 @@ const App: React.FC = () => {
     setCurrentUser(user);
     localStorage.setItem('truchoice_userid', user.id);
     localStorage.setItem('truchoice_user', JSON.stringify(user));
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(console.warn);
+    }
   };
 
   const handleLogout = () => {
@@ -424,7 +473,7 @@ const App: React.FC = () => {
 
              {/* Admin Toggle */}
              {currentUser.role === 'admin' && (
-                 <button onClick={() => setIsAdminOpen(true)} className="p-2 text-slate-400 hover:text-orange-600 transition-colors">
+                 <button onClick={() => setIsAdminOpen(true)} className="p-2 text-slate-400 hover:text-orange-600 transition-colors" title="Company Overview">
                     <Briefcase size={20} />
                  </button>
              )}
@@ -611,8 +660,11 @@ const App: React.FC = () => {
                    <span className="text-[10px] font-bold mt-1">Time</span>
                </button>
                <button onClick={handleSwitchToChat} 
-                   className={`flex flex-col items-center py-3 px-6 transition-colors ${currentView === 'chat' ? 'text-orange-600' : 'text-slate-400'}`}>
+                   className={`flex flex-col items-center py-3 px-6 transition-colors relative ${currentView === 'chat' ? 'text-orange-600' : 'text-slate-400'}`}>
                    <MessageCircle size={22} strokeWidth={currentView === 'chat' ? 2.5 : 2} />
+                   {hasUnreadMessages && currentView !== 'chat' && (
+                       <span className="absolute top-2 right-5 w-2.5 h-2.5 bg-red-500 rounded-full border border-white animate-pulse"></span>
+                   )}
                    <span className="text-[10px] font-bold mt-1">Chat</span>
                </button>
                <button onClick={() => setCurrentView('calendar')} 
@@ -646,6 +698,7 @@ const App: React.FC = () => {
               users={users} 
               jobs={jobs}
               tasks={tasks} // Now passing tasks for active monitoring
+              timeEntries={timeEntries}
               onRefresh={() => loadData(true)} 
               onClose={() => setIsAdminOpen(false)} 
           />

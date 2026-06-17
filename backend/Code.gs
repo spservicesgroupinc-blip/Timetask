@@ -204,12 +204,27 @@ function isAuthorized(request) {
   if (userRole === 'admin') return true;
 
   // Non-table actions
-  if (!table) return ['saveSubscription', 'generateReport', 'saveUser', 'saveJob', 'saveTask', 'saveTimeEntry'].includes(action);
+  if (!table) {
+    return ['saveSubscription', 'generateReport', 'saveUser', 'saveJob', 'saveTask', 'saveTimeEntry', 'create', 'update', 'delete'].includes(action);
+  }
 
-  // Allow all authenticated users to perform operations on all tables
-  // This respects the user's request to "remove all restrictive permissions" 
-  // so that "users" can do everything.
-  return true;
+  const tableConfig = TRUCHOICE_CORE_CONFIG.SHEETS[table];
+  if (!tableConfig) {
+     console.log("🚫 BLOCKED ACCESS (TABLE NOT FOUND):", { table, action, userRole });
+     return false;
+  }
+
+  const allowedRoles = tableConfig.roles.map(r => String(r).toLowerCase().trim());
+  
+  // Provide access if role matches config or if 'user'
+  if (allowedRoles.includes(userRole) || userRole === 'user' || userRole === 'employee') {
+    return true; 
+  }
+
+  // --- ADD THIS LINE TO SEE THE ERROR IN THE LOGS ---
+  console.log("🚫 BLOCKED ACCESS:", { table, action, userRole, allowedRoles });
+
+  return false; 
 }
 
 function readData(tableName, user) {
