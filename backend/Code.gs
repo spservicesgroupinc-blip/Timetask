@@ -90,7 +90,7 @@ function parseRequest(e) {
       const json = JSON.parse(e.postData.contents);
       return {
         action: json.action || 'read',
-        tableName: json.table ? String(json.table).toLowerCase() : null,
+        tableName: json.table ? String(json.table).toLowerCase().trim() : null,
         data: json.data || {}, 
         id: json.id || (json.data && json.data.id ? json.data.id : null),
         token: json.token || token
@@ -193,15 +193,23 @@ function registerUser(data) {
 
 function isAuthorized(request) {
   const user = request.user;
+  // Deny if not authenticated
   if (!user) return false;
-  const table = request.tableName;
-  if (!table) return ['saveSubscription', 'generateReport'].includes(request.action);
-  if (request.action === 'read') return true;
-  if (table === 'users') return user.role === 'admin';
-  if (table === 'jobs') return ['admin', 'manager'].includes(user.role);
-  if (['tasks', 'messages', 'subscriptions', 'time_entries'].includes(table)) return true;
-  const config = TRUCHOICE_CORE_CONFIG.SHEETS[table];
-  return config && config.roles ? config.roles.includes(user.role) : true;
+  
+  const action = request.action || 'read';
+  const table = (request.tableName || '').toLowerCase().trim();
+  const userRole = String(user.role || '').toLowerCase().trim();
+
+  // Admin bypass
+  if (userRole === 'admin') return true;
+
+  // Non-table actions
+  if (!table) return ['saveSubscription', 'generateReport', 'saveUser', 'saveJob', 'saveTask', 'saveTimeEntry'].includes(action);
+
+  // Allow all authenticated users to perform operations on all tables
+  // This respects the user's request to "remove all restrictive permissions" 
+  // so that "users" can do everything.
+  return true;
 }
 
 function readData(tableName, user) {
@@ -223,12 +231,7 @@ function readData(tableName, user) {
     return item;
   });
   if (tableName === 'users') result = result.map(({password, pin, ...u}) => u);
-  if (user && (user.role === 'employee' || user.role === 'user')) {
-     const curId = String(user.userId || user.id).toLowerCase().trim();
-     const curN = String(user.name).toLowerCase().trim();
-     if (tableName === 'time_entries') result = result.filter(it => [it.userid, it.userId].map(s => String(s||'').toLowerCase().trim()).includes(curId) || [it.userid, it.userId].map(s => String(s||'').toLowerCase().trim()).includes(curN));
-     else if (tableName === 'tasks') result = result.filter(it => [it.assignedto, it.assignedTo].map(s => String(s||'').toLowerCase().trim()).includes(curId) || [it.assignedto, it.assignedTo].map(s => String(s||'').toLowerCase().trim()).includes(curN));
-  }
+  
   return result;
 }
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Job, JobStatus } from '../types';
 import { X, Camera, DollarSign, MapPin, Calendar, Briefcase } from './Icons';
+import { generateUUID } from '@/utils/uuid';
 
 interface Props {
   isOpen: boolean;
@@ -34,7 +35,7 @@ const JobModal: React.FC<Props> = ({ isOpen, onClose, onSave, job, initialDate }
       const defaultSoldDate = new Date().toISOString().split('T')[0];
 
       const initialJob = job || {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         customerName: '',
         address: '',
         jobType: '',

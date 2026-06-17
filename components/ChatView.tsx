@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ChatMessage } from '../types';
 import { Send, Camera, X, RotateCcw, AlertTriangle } from './Icons';
 import { sendMessage } from '../services/sheetService';
+import { generateUUID } from '@/utils/uuid';
 
 interface Props {
   messages: ChatMessage[];
@@ -131,16 +132,6 @@ const MessageList = React.memo(({ messages, currentUserName, handleSend }: any) 
     );
 });
 
-
-const generateUUID = () => {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-        return crypto.randomUUID();
-    }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-};
 
 const ChatView: React.FC<Props> = ({ messages: serverMessages, currentUserName }) => {
   const [inputValue, setInputValue] = useState('');

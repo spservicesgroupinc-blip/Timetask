@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { TimeEntry, JobOption } from '../types';
 import { Clock, DollarSign, Calendar, RotateCcw, CheckCircle, AlertTriangle, Sparkles, Briefcase, FileText, Download, X } from './Icons';
 import { saveTimeEntryLocal, syncPendingTimeEntries, generateReport } from '../services/sheetService';
+import { generateUUID } from '@/utils/uuid';
 
 interface Props {
   timeEntries: TimeEntry[];
@@ -55,15 +56,6 @@ const ActiveTimer = React.memo(({ startTime, hourlyRate }: { startTime: number, 
     );
 });
 
-const generateUUID = () => {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-        return crypto.randomUUID();
-    }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-};
 
 const TimeClockView: React.FC<Props> = ({ 
     timeEntries, 
@@ -145,7 +137,8 @@ const TimeClockView: React.FC<Props> = ({
         
         if (hourlyRate) {
              const durationHours = (endTime - activeEntry.startTime) / (1000 * 60 * 60);
-             calculatedPay = parseFloat((durationHours * parseFloat(hourlyRate)).toFixed(2));
+             const rateVal = parseFloat(String(hourlyRate).replace(/[^0-9.]/g, '')) || 0;
+             calculatedPay = parseFloat((durationHours * rateVal).toFixed(2));
         }
 
         updatedEntry = {

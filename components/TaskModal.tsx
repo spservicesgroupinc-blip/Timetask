@@ -5,6 +5,7 @@ import { X, Plus, CheckCircle, Trash, Camera, Pencil, Briefcase, Clock, FileText
 import { parseDescription, serializeDescription, ChecklistItem } from '../utils/checklist';
 import { ImageEditor } from './ImageEditor';
 import { GeminiSafetyAssistant } from './GeminiSafetyAssistant';
+import { generateUUID } from '@/utils/uuid';
 
 interface Props {
   isOpen: boolean;
@@ -51,7 +52,7 @@ const TaskModal: React.FC<Props> = ({ isOpen, onClose, onSave, task, initialDate
       const defaultDate = initialDate || new Date().toISOString().split('T')[0];
 
       const initialTask = task || {
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         title: '',
         description: '',
         location: '',

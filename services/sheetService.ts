@@ -224,7 +224,7 @@ export const loginUserApi = async (email: string, password: string): Promise<{ t
     }
 };
 
-export const registerUserApi = async (name: string, email: string, password: string, role = 'admin'): Promise<{ token: string; user: UserProfile }> => {
+export const registerUserApi = async (name: string, email: string, password: string, role = 'user'): Promise<{ token: string; user: UserProfile }> => {
     if (!GOOGLE_SCRIPT_URL) {
         // Mock fallback
         const mockUser: UserProfile = { id: 'new-id', name, email, password, role, rate: '40' };

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { UserProfile, JobOption, Task, TaskStatus, TaskPriority } from '../types';
 import { Trash, Plus, User, Briefcase, MapPin, X, Clock, Sparkles, LayoutList, CheckCircle } from './Icons';
 import { saveUser, deleteUser, saveJob, deleteJob, saveTask, deleteTask } from '../services/sheetService';
+import { generateUUID } from '@/utils/uuid';
 
 interface Props {
   users: UserProfile[];
@@ -114,7 +115,7 @@ const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: p
       
       const isNew = !editingUser;
       const user: UserProfile = {
-          id: editingUser ? editingUser.id : crypto.randomUUID(),
+          id: editingUser ? editingUser.id : generateUUID(),
           name: newUser.name,
           email: newUser.email ? newUser.email.trim() : '',
           password: newUser.password,
@@ -196,16 +197,6 @@ const AdminView: React.FC<Props> = ({ users: propUsers, jobs: propJobs, tasks: p
                 onRefresh();
             });
       }
-  };
-
-   const generateUUID = () => {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-        return crypto.randomUUID();
-    }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
   };
 
   const handleAddTask = (e: React.FormEvent) => {
