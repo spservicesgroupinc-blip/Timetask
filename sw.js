@@ -1,5 +1,5 @@
 
-const CACHE_NAME = 'truchoice-tasks-v4';
+const CACHE_NAME = 'truchoice-tasks-v5';
 
 // Add the external CDNs your app relies on
 const urlsToCache = [
@@ -39,17 +39,21 @@ self.addEventListener('activate', (event) => {
   self.clients.claim(); // Take control of clients immediately
 });
 
-// Fetch: Network first for API, Cache first for everything else
+// Fetch: Network first caching for robust Vercel updates
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  // 1. API Calls (Apps Script) -> Network Only (don't cache data aggressively)
-  if (url.href.includes('script.google.com')) {
-    event.respondWith(fetch(event.request));
+  // Only cache GET requests to prevent iOS/Safari errors with POST
+  if (event.request.method !== 'GET') {
     return;
   }
 
-  // 2. External Assets (ESM.sh, CDNs, Fonts) -> Stale-While-Revalidate
+  const url = new URL(event.request.url);
+
+  // 1. API Calls -> Network Only
+  if (url.href.includes('script.google.com') || url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  // 2. External CDNs (Tailwind, Fonts) -> Stale-While-Revalidate
   if (
      url.hostname === 'esm.sh' || 
      url.hostname === 'cdn.tailwindcss.com' ||
@@ -60,37 +64,37 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
         const fetchPromise = fetch(event.request).then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
+          if (networkResponse && networkResponse.status === 200 && (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
             const responseToCache = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => {
               cache.put(event.request, responseToCache);
             });
           }
           return networkResponse;
-        });
+        }).catch(err => console.log('CDN fetch failed', err));
         return cachedResponse || fetchPromise;
       })
     );
     return;
   }
 
-  // 3. App Files (HTML, JS bundles) -> Cache First
+  // 3. App Files (HTML, JS, Vite assets) -> Network First
+  // Ensures Vercel deployments are immediately active instead of stuck in cache forever
   event.respondWith(
-    caches.match(event.request)
+    fetch(event.request)
       .then((response) => {
-        if (response) {
-          return response;
+        // Only cache valid basic responses
+        if (response && response.status === 200 && response.type === 'basic') {
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
         }
-        return fetch(event.request).then((response) => {
-           if(!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-           }
-           const responseToCache = response.clone();
-           caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-           });
-           return response;
-        });
+        return response;
+      })
+      .catch(() => {
+        // If network fails (offline), fallback to cache
+        return caches.match(event.request);
       })
   );
 });
